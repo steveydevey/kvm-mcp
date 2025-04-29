@@ -130,9 +130,85 @@ async def reboot_vm(name: str, arguments: dict) -> dict:
     except libvirt.libvirtError as e:
         return {"status": "error", "message": str(e)}
 
+def generate_ignition_config(vm_name: str, arguments: dict) -> str:
+    """Generate an Ignition configuration for Fedora CoreOS"""
+    try:
+        # Get configuration values
+        hostname = arguments.get("hostname", config["vm"]["ignition"]["default_hostname"])
+        user = arguments.get("user", config["vm"]["ignition"]["default_user"])
+        timezone = arguments.get("timezone", config["vm"]["ignition"]["default_timezone"])
+        locale = arguments.get("locale", config["vm"]["ignition"]["default_locale"])
+        
+        # Read SSH key
+        ssh_key_path = os.path.expanduser(arguments.get("ssh_key", config["vm"]["ignition"]["default_ssh_key"]))
+        if not os.path.exists(ssh_key_path):
+            raise FileNotFoundError(f"SSH key not found at {ssh_key_path}")
+        
+        with open(ssh_key_path, 'r') as f:
+            ssh_key = f.read().strip()
+        
+        # Generate Ignition config
+        ignition_config = {
+            "ignition": {
+                "version": "3.3.0"
+            },
+            "passwd": {
+                "users": [
+                    {
+                        "name": user,
+                        "sshAuthorizedKeys": [ssh_key]
+                    }
+                ]
+            },
+            "storage": {
+                "files": [
+                    {
+                        "path": "/etc/hostname",
+                        "mode": 420,
+                        "overwrite": True,
+                        "contents": {
+                            "source": f"data:,{hostname}"
+                        }
+                    },
+                    {
+                        "path": "/etc/locale.conf",
+                        "mode": 420,
+                        "overwrite": True,
+                        "contents": {
+                            "source": f"data:,LANG={locale}"
+                        }
+                    }
+                ]
+            },
+            "systemd": {
+                "units": [
+                    {
+                        "name": "timezone.service",
+                        "enabled": True,
+                        "contents": f"""[Unit]
+Description=Set timezone
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/timedatectl set-timezone {timezone}
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target"""
+                    }
+                ]
+            }
+        }
+        
+        return json.dumps(ignition_config, indent=2)
+    except Exception as e:
+        raise Exception(f"Failed to generate Ignition config: {str(e)}")
+
 @server.call_tool()
 async def create_vm(name: str, arguments: dict) -> dict:
-    """Create a new virtual machine using virt-install"""
+    """Create a new virtual machine using virt-install or from a master image"""
     try:
         # Required parameters
         vm_name = arguments.get("name", config["vm"]["default_name"])
@@ -145,53 +221,140 @@ async def create_vm(name: str, arguments: dict) -> dict:
         location = arguments.get("location")  # URL for network installation
         cdrom = arguments.get("cdrom", config["vm"]["default_iso"])  # Path to ISO
         extra_args = arguments.get("extra_args", "")
+        master_image = arguments.get("master_image", config["vm"]["default_master_image"])  # Path to master qcow2 image
         
         # Ensure VM directory exists
         os.makedirs(config["vm"]["disk_path"], exist_ok=True)
         
-        # Build virt-install command
-        cmd = [
-            "virt-install",
-            f"--name={vm_name}",
-            f"--memory={memory}",
-            f"--vcpus={vcpus}",
-            f"--disk=path={os.path.join(config['vm']['disk_path'], f'{vm_name}.qcow2')},size={disk_size}",
-            f"--os-variant={os_variant}",
-            f"--network=bridge={config['vm']['default_network']},model=virtio",
-            "--graphics=vnc,listen=0.0.0.0",
-            "--console=pty,target_type=serial",
-            "--noautoconsole",
-            "--virt-type=kvm"
-        ]
-        
-        # Add installation source
-        if location:
-            cmd.append(f"--location={location}")
-        elif cdrom:
-            cmd.append(f"--cdrom={cdrom}")
+        if master_image:
+            # Create VM from master image
+            if not os.path.exists(master_image):
+                return {"status": "error", "message": f"Master image {master_image} not found"}
+            
+            # Create a copy of the master image
+            import subprocess
+            disk_path = os.path.join(config["vm"]["disk_path"], f"{vm_name}.qcow2")
+            result = subprocess.run(["qemu-img", "create", "-f", "qcow2", "-b", master_image, disk_path], 
+                                  capture_output=True, text=True)
+            
+            if result.returncode != 0:
+                return {
+                    "status": "error",
+                    "message": f"Failed to create disk image for VM {vm_name}",
+                    "error": result.stderr
+                }
+            
+            # Generate Ignition config
+            try:
+                ignition_config = generate_ignition_config(vm_name, arguments)
+                ignition_path = os.path.join(config["vm"]["disk_path"], f"{vm_name}.ign")
+                with open(ignition_path, 'w') as f:
+                    f.write(ignition_config)
+            except Exception as e:
+                return {"status": "error", "message": str(e)}
+            
+            # Create VM definition
+            xml = f"""<domain type='kvm'>
+                <name>{vm_name}</name>
+                <memory unit='MiB'>{memory}</memory>
+                <vcpu placement='static'>{vcpus}</vcpu>
+                <os>
+                    <type arch='x86_64' machine='pc-q35-7.2'>hvm</type>
+                    <boot dev='hd'/>
+                </os>
+                <features>
+                    <acpi/>
+                    <apic/>
+                    <vmport state='off'/>
+                </features>
+                <cpu mode='host-model' check='partial'/>
+                <clock offset='utc'/>
+                <on_poweroff>destroy</on_poweroff>
+                <on_reboot>restart</on_reboot>
+                <on_crash>destroy</on_crash>
+                <devices>
+                    <emulator>/usr/bin/qemu-system-x86_64</emulator>
+                    <disk type='file' device='disk'>
+                        <driver name='qemu' type='qcow2'/>
+                        <source file='{disk_path}'/>
+                        <target dev='vda' bus='virtio'/>
+                    </disk>
+                    <interface type='bridge'>
+                        <source bridge='{config["vm"]["default_network"]}'/>
+                        <model type='virtio'/>
+                    </interface>
+                    <graphics type='vnc' port='-1' listen='0.0.0.0'/>
+                    <console type='pty'/>
+                </devices>
+                <qemu:commandline>
+                    <qemu:arg value='-fw_cfg'/>
+                    <qemu:arg value='name=opt/com.coreos/config,file={ignition_path}'/>
+                </qemu:commandline>
+            </domain>"""
+            
+            # Define and start the VM
+            conn = libvirt.open('qemu:///system')
+            if conn is None:
+                return {"status": "error", "message": "Failed to connect to libvirt daemon"}
+            
+            try:
+                domain = conn.defineXML(xml)
+                if domain.create() == 0:
+                    return {
+                        "status": "success",
+                        "message": f"VM {vm_name} created and started successfully from master image"
+                    }
+                else:
+                    return {
+                        "status": "error",
+                        "message": f"Failed to start VM {vm_name}"
+                    }
+            finally:
+                conn.close()
         else:
-            return {"status": "error", "message": "Either location or cdrom must be provided"}
-        
-        # Add extra arguments if provided
-        if extra_args:
-            cmd.append(f"--extra-args={extra_args}")
-        
-        # Execute virt-install
-        import subprocess
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        
-        if result.returncode == 0:
-            return {
-                "status": "success",
-                "message": f"VM {vm_name} creation started successfully",
-                "output": result.stdout
-            }
-        else:
-            return {
-                "status": "error",
-                "message": f"Failed to create VM {vm_name}",
-                "error": result.stderr
-            }
+            # Original installation-based VM creation
+            cmd = [
+                "virt-install",
+                f"--name={vm_name}",
+                f"--memory={memory}",
+                f"--vcpus={vcpus}",
+                f"--disk=path={os.path.join(config['vm']['disk_path'], f'{vm_name}.qcow2')},size={disk_size}",
+                f"--os-variant={os_variant}",
+                f"--network=bridge={config['vm']['default_network']},model=virtio",
+                "--graphics=vnc,listen=0.0.0.0",
+                "--console=pty,target_type=serial",
+                "--noautoconsole",
+                "--virt-type=kvm"
+            ]
+            
+            # Add installation source
+            if location:
+                cmd.append(f"--location={location}")
+            elif cdrom:
+                cmd.append(f"--cdrom={cdrom}")
+            else:
+                return {"status": "error", "message": "Either location, cdrom, or master_image must be provided"}
+            
+            # Add extra arguments if provided
+            if extra_args:
+                cmd.append(f"--extra-args={extra_args}")
+            
+            # Execute virt-install
+            import subprocess
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            
+            if result.returncode == 0:
+                return {
+                    "status": "success",
+                    "message": f"VM {vm_name} creation started successfully",
+                    "output": result.stdout
+                }
+            else:
+                return {
+                    "status": "error",
+                    "message": f"Failed to create VM {vm_name}",
+                    "error": result.stderr
+                }
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
