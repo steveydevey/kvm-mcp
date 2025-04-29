@@ -1,0 +1,6 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+when running a python script always use the python3 binary instead of the python binary 
