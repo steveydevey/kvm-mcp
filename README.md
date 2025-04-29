@@ -38,6 +38,13 @@ Managing KVM virtual machines typically requires using multiple command-line too
   - Local installation from CDROM
   - Support for various OS variants
 
+- **Performance Optimizations**:
+  - Connection pooling for libvirt to reduce connection overhead
+  - VM information caching for improved responsiveness
+  - Asynchronous processing for better concurrency
+  - Advanced logging for diagnostics and troubleshooting
+  - Graceful shutdown handling for proper resource cleanup
+
 ## Configuration
 
 The server uses a JSON configuration file (`config.json`) to store default values and paths. This makes the server more portable and easier to customize. The configuration includes:
@@ -102,6 +109,39 @@ You can modify these values to match your environment's requirements.
 2. Send commands using JSON-RPC. Example scripts are provided:
    - `create_vm.sh`: Create a new VM using default configuration
    - `get_vnc_ports.sh`: Find VNC ports for running VMs
+
+## Performance Tuning
+
+### Connection Pooling
+
+The server uses a connection pool for libvirt to reduce the overhead of repeatedly opening and closing connections. You can configure the pool size in the code:
+
+```python
+connection_pool = LibvirtConnectionPool(max_connections=5, timeout=30)
+```
+
+### Caching
+
+VM information is cached to reduce repeated queries to libvirt. The cache has configurable settings:
+
+```python
+vm_info_cache = VMInfoCache(max_size=50, ttl=60)  # Cache up to 50 VMs with 60-second TTL
+```
+
+To bypass the cache when needed, add the `no_cache` parameter to your requests:
+
+```json
+{"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "list_vms", "arguments": {"no_cache": true}}, "id": 1}
+```
+
+### Logging
+
+Logging is configured to help diagnose performance issues. Logs are rotated automatically:
+
+```
+kvm_mcp.log       # Current log file
+kvm_mcp.log.1     # Previous log file
+```
 
 ## Example Commands
 

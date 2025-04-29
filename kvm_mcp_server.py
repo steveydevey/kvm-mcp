@@ -1,5 +1,7 @@
 import libvirt
 import os
+import logging
+from logging.handlers import RotatingFileHandler
 from dotenv import load_dotenv
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -8,7 +10,168 @@ import asyncio
 import json
 import subprocess
 import time
-from typing import Union
+from typing import Union, Dict, Optional
+from functools import wraps
+from contextlib import asynccontextmanager
+import signal
+
+# Configure logging
+log_dir = os.path.dirname(os.path.abspath(__file__))
+log_file = os.path.join(log_dir, 'kvm_mcp.log')
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        RotatingFileHandler(log_file, maxBytes=10485760, backupCount=5),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger('kvm_mcp')
+
+# Connection pool for libvirt
+class LibvirtConnectionPool:
+    """A simple connection pool for libvirt to avoid repeated connections."""
+    
+    def __init__(self, uri='qemu:///system', max_connections=5, timeout=30):
+        self.uri = uri
+        self.max_connections = max_connections
+        self.timeout = timeout
+        self.connections = asyncio.Queue(maxsize=max_connections)
+        self.active_connections = 0
+        self._initialize()
+    
+    def _initialize(self):
+        """Initialize the connection pool with connections."""
+        for _ in range(self.max_connections):
+            try:
+                conn = libvirt.open(self.uri)
+                if conn:
+                    self.connections.put_nowait(conn)
+                    self.active_connections += 1
+                    logger.debug(f"Added connection to pool, active: {self.active_connections}")
+            except libvirt.libvirtError as e:
+                logger.error(f"Failed to initialize libvirt connection: {str(e)}")
+                # Don't raise - allow partial pool initialization
+    
+    @asynccontextmanager
+    async def get_connection(self):
+        """Get a connection from the pool."""
+        conn = None
+        try:
+            # Try to get from the pool first
+            try:
+                conn = await asyncio.wait_for(self.connections.get(), self.timeout)
+                logger.debug("Got connection from pool")
+                yield conn
+            except asyncio.TimeoutError:
+                # If the pool is empty and we reach max, create a new one
+                logger.warning("Connection pool timeout, creating new connection")
+                conn = libvirt.open(self.uri)
+                if not conn:
+                    raise libvirt.libvirtError("Failed to connect to libvirt daemon")
+                yield conn
+        except libvirt.libvirtError as e:
+            logger.error(f"Libvirt connection error: {str(e)}")
+            raise
+        finally:
+            # Return the connection to the pool if it's still valid
+            if conn:
+                try:
+                    # Simple check if connection is alive
+                    conn.getVersion()
+                    await self.connections.put(conn)
+                    logger.debug("Returned connection to pool")
+                except libvirt.libvirtError:
+                    # Connection is dead, close it
+                    try:
+                        conn.close()
+                        self.active_connections -= 1
+                        logger.warning(f"Closed dead connection, active: {self.active_connections}")
+                    except:
+                        pass
+                    
+                    # Create a new one if possible
+                    try:
+                        new_conn = libvirt.open(self.uri)
+                        if new_conn:
+                            await self.connections.put(new_conn)
+                            self.active_connections += 1
+                            logger.debug(f"Created replacement connection, active: {self.active_connections}")
+                    except:
+                        logger.error("Failed to create replacement connection")
+
+    async def close_all(self):
+        """Close all connections in the pool."""
+        while not self.connections.empty():
+            try:
+                conn = self.connections.get_nowait()
+                conn.close()
+                self.active_connections -= 1
+                logger.debug(f"Closed connection, active: {self.active_connections}")
+            except asyncio.QueueEmpty:
+                break
+            except Exception as e:
+                logger.error(f"Error closing connection: {str(e)}")
+
+# Create a connection pool
+connection_pool = LibvirtConnectionPool()
+
+# Decorator for timing methods
+def timing_decorator(func):
+    @wraps(func)
+    async def wrapper(*args, **kwargs):
+        start_time = time.time()
+        try:
+            return await func(*args, **kwargs)
+        finally:
+            elapsed = time.time() - start_time
+            logger.debug(f"{func.__name__} took {elapsed:.4f} seconds")
+    return wrapper
+
+# Simple LRU cache for VM info
+class VMInfoCache:
+    """A simple LRU cache for VM information."""
+    
+    def __init__(self, max_size=50, ttl=60):
+        self.max_size = max_size
+        self.ttl = ttl
+        self.cache = {}
+        self.timestamps = {}
+    
+    def get(self, vm_name):
+        """Get a VM's info from the cache if available and not expired."""
+        if vm_name in self.cache:
+            if time.time() - self.timestamps[vm_name] < self.ttl:
+                return self.cache[vm_name]
+            # Expired
+            del self.cache[vm_name]
+            del self.timestamps[vm_name]
+        return None
+    
+    def set(self, vm_name, vm_info):
+        """Set a VM's info in the cache."""
+        # Remove oldest item if full
+        if len(self.cache) >= self.max_size:
+            oldest_vm = min(self.timestamps.items(), key=lambda x: x[1])[0]
+            del self.cache[oldest_vm]
+            del self.timestamps[oldest_vm]
+        
+        self.cache[vm_name] = vm_info
+        self.timestamps[vm_name] = time.time()
+    
+    def invalidate(self, vm_name=None):
+        """Invalidate cache entry for a VM or the entire cache."""
+        if vm_name:
+            if vm_name in self.cache:
+                del self.cache[vm_name]
+                del self.timestamps[vm_name]
+        else:
+            self.cache.clear()
+            self.timestamps.clear()
+
+# Create VM info cache
+vm_info_cache = VMInfoCache()
 
 def _apply_env_overrides(config: dict, prefix: str = "") -> dict:
     """Apply environment variable overrides to configuration"""
@@ -64,104 +227,132 @@ config = load_config()
 server = Server("kvm-control")
 
 @server.call_tool()
+@timing_decorator
 async def list_vms(name: str, arguments: dict) -> list:
     """List all available virtual machines"""
     try:
-        conn = libvirt.open('qemu:///system')
-        if conn is None:
-            return [{"error": "Failed to connect to libvirt daemon"}]
+        # Check if we should bypass cache
+        use_cache = not arguments.get("no_cache", False)
+        if use_cache:
+            cached_list = vm_info_cache.get("_all_vms_")
+            if cached_list:
+                logger.debug("Returning cached VM list")
+                return cached_list
         
-        domains = conn.listAllDomains()
-        result = []
-        for domain in domains:
-            try:
-                state, reason = domain.state()
-                state_str = {
-                    libvirt.VIR_DOMAIN_NOSTATE: "no state",
-                    libvirt.VIR_DOMAIN_RUNNING: "running",
-                    libvirt.VIR_DOMAIN_BLOCKED: "blocked",
-                    libvirt.VIR_DOMAIN_PAUSED: "paused",
-                    libvirt.VIR_DOMAIN_SHUTDOWN: "shutdown",
-                    libvirt.VIR_DOMAIN_SHUTOFF: "shutoff",
-                    libvirt.VIR_DOMAIN_CRASHED: "crashed",
-                    libvirt.VIR_DOMAIN_PMSUSPENDED: "suspended"
-                }.get(state, "unknown")
-                
-                result.append({
-                    'name': domain.name(),
-                    'id': domain.ID(),
-                    'state': state_str,
-                    'memory': domain.maxMemory() // 1024,  # Convert to MB
-                    'vcpu': domain.maxVcpus()
-                })
-            except libvirt.libvirtError as e:
-                # If we can't get some info about a domain, still include it with what we know
-                result.append({
-                    'name': domain.name(),
-                    'state': 'unknown',
-                    'error': str(e)
-                })
-        
-        conn.close()
-        return result
+        logger.info("Fetching VM list from libvirt")
+        async with connection_pool.get_connection() as conn:
+            domains = conn.listAllDomains()
+            result = []
+            for domain in domains:
+                try:
+                    state, reason = domain.state()
+                    state_str = {
+                        libvirt.VIR_DOMAIN_NOSTATE: "no state",
+                        libvirt.VIR_DOMAIN_RUNNING: "running",
+                        libvirt.VIR_DOMAIN_BLOCKED: "blocked",
+                        libvirt.VIR_DOMAIN_PAUSED: "paused",
+                        libvirt.VIR_DOMAIN_SHUTDOWN: "shutdown",
+                        libvirt.VIR_DOMAIN_SHUTOFF: "shutoff",
+                        libvirt.VIR_DOMAIN_CRASHED: "crashed",
+                        libvirt.VIR_DOMAIN_PMSUSPENDED: "suspended"
+                    }.get(state, "unknown")
+                    
+                    result.append({
+                        'name': domain.name(),
+                        'id': domain.ID(),
+                        'state': state_str,
+                        'memory': domain.maxMemory() // 1024,  # Convert to MB
+                        'vcpu': domain.maxVcpus()
+                    })
+                except libvirt.libvirtError as e:
+                    logger.warning(f"Error getting info for domain {domain.name()}: {str(e)}")
+                    # If we can't get some info about a domain, still include it with what we know
+                    result.append({
+                        'name': domain.name(),
+                        'state': 'unknown',
+                        'error': str(e)
+                    })
+            
+            # Cache the result
+            if use_cache:
+                vm_info_cache.set("_all_vms_", result)
+            
+            return result
     except libvirt.libvirtError as e:
+        logger.error(f"Error listing VMs: {str(e)}")
         return [{"error": str(e)}]
 
 @server.call_tool()
+@timing_decorator
 async def start_vm(name: str, arguments: dict) -> dict:
     """Start a virtual machine by name"""
     try:
         vm_name = arguments.get("name")
         if not vm_name:
+            logger.error("VM name not provided")
             return {"status": "error", "message": "VM name not provided"}
         
-        conn = libvirt.open('qemu:///system')
-        if conn is None:
-            return {"status": "error", "message": "Failed to connect to libvirt daemon"}
-        
-        domain = conn.lookupByName(vm_name)
-        state, reason = domain.state()
-        
-        if state == libvirt.VIR_DOMAIN_RUNNING:
-            return {"status": "error", "message": f"VM {vm_name} is already running"}
-        
-        if domain.create() == 0:
-            result = {"status": "success", "message": f"VM {vm_name} started successfully"}
-        else:
-            result = {"status": "error", "message": f"Failed to start VM {vm_name}"}
-        
-        conn.close()
-        return result
+        logger.info(f"Starting VM: {vm_name}")
+        async with connection_pool.get_connection() as conn:
+            domain = conn.lookupByName(vm_name)
+            state, reason = domain.state()
+            
+            if state == libvirt.VIR_DOMAIN_RUNNING:
+                logger.warning(f"VM {vm_name} is already running")
+                return {"status": "error", "message": f"VM {vm_name} is already running"}
+            
+            if domain.create() == 0:
+                # Invalidate cache for this VM and the overall VM list
+                vm_info_cache.invalidate(vm_name)
+                vm_info_cache.invalidate("_all_vms_")
+                
+                logger.info(f"VM {vm_name} started successfully")
+                result = {"status": "success", "message": f"VM {vm_name} started successfully"}
+            else:
+                logger.error(f"Failed to start VM {vm_name}")
+                result = {"status": "error", "message": f"Failed to start VM {vm_name}"}
+            
+            return result
     except libvirt.libvirtError as e:
-        return {"status": "error", "message": str(e)}
+        error_msg = str(e)
+        logger.error(f"Error starting VM {arguments.get('name', 'unknown')}: {error_msg}")
+        return {"status": "error", "message": error_msg}
 
 @server.call_tool()
+@timing_decorator
 async def stop_vm(name: str, arguments: dict) -> dict:
     """Stop a virtual machine by name"""
     try:
         vm_name = arguments.get("name")
         if not vm_name:
+            logger.error("VM name not provided")
             return {"status": "error", "message": "VM name not provided"}
         
-        conn = libvirt.open('qemu:///system')
-        if conn is None:
-            return {"status": "error", "message": "Failed to connect to libvirt daemon"}
-        
-        domain = conn.lookupByName(vm_name)
-        state, reason = domain.state()
-        
-        if state == libvirt.VIR_DOMAIN_SHUTOFF:
-            return {"status": "error", "message": f"VM {vm_name} is already stopped"}
-        
-        if domain.shutdown() == 0:
-            result = {"status": "success", "message": f"VM {vm_name} stopped successfully"}
-        else:
-            result = {"status": "error", "message": f"Failed to stop VM {vm_name}"}
-        
-        conn.close()
-        return result
+        logger.info(f"Stopping VM: {vm_name}")
+        async with connection_pool.get_connection() as conn:
+            domain = conn.lookupByName(vm_name)
+            state, reason = domain.state()
+            
+            if state == libvirt.VIR_DOMAIN_SHUTOFF:
+                logger.warning(f"VM {vm_name} is already stopped")
+                return {"status": "error", "message": f"VM {vm_name} is already stopped"}
+            
+            if domain.shutdown() == 0:
+                # Invalidate cache for this VM and the overall VM list
+                vm_info_cache.invalidate(vm_name)
+                vm_info_cache.invalidate("_all_vms_")
+                
+                logger.info(f"VM {vm_name} stopped successfully")
+                result = {"status": "success", "message": f"VM {vm_name} stopped successfully"}
+            else:
+                logger.error(f"Failed to stop VM {vm_name}")
+                result = {"status": "error", "message": f"Failed to stop VM {vm_name}"}
+            
+            return result
     except libvirt.libvirtError as e:
-        return {"status": "error", "message": str(e)}
+        error_msg = str(e)
+        logger.error(f"Error stopping VM {arguments.get('name', 'unknown')}: {error_msg}")
+        return {"status": "error", "message": error_msg}
 
 @server.call_tool()
 async def reboot_vm(name: str, arguments: dict) -> dict:
@@ -540,170 +731,65 @@ async def handle_request(request: Union[str, dict]) -> dict:
         }
 
 async def main():
-    while True:
+    """Main function to handle JSON-RPC requests"""
+    # Setup signal handlers for graceful shutdown
+    loop = asyncio.get_running_loop()
+    
+    # Register signal handlers for graceful shutdown on Unix systems
+    for sig_name in ('SIGINT', 'SIGTERM'):
         try:
-            request = input()
-            if not request:
+            loop.add_signal_handler(
+                getattr(signal, sig_name),
+                lambda sig_name=sig_name: asyncio.create_task(shutdown(sig_name))
+            )
+        except (NotImplementedError, AttributeError):
+            # Windows doesn't support signals
+            logger.warning(f"Could not add signal handler for {sig_name} (might be Windows)")
+    
+    try:
+        logger.info("Starting KVM MCP server")
+        
+        while True:
+            try:
+                request = input()
+                if not request:
+                    break
+                
+                response = await handle_request(request)
+                print(json.dumps(response))
+            except EOFError:
+                logger.info("Received EOF, shutting down")
                 break
-            response = await handle_request(request)
-            print(json.dumps(response))
-        except EOFError:
-            break
-        except Exception as e:
-            print(json.dumps({
-                "jsonrpc": "2.0",
-                "id": None,
-                "error": {"code": -32000, "message": str(e)}
-            }))
+            except Exception as e:
+                logger.error(f"Error handling request: {str(e)}")
+                print(json.dumps({
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {"code": -32000, "message": str(e)}
+                }))
+    finally:
+        # Cleanup resources
+        logger.info("Cleaning up resources")
+        await connection_pool.close_all()
 
-async def handle_create_vm(name: str, memory: int, vcpus: int, disk_size: int, network: str) -> dict:
-    """Create a new VM"""
-    try:
-        # Validate parameters
-        if not name or not isinstance(name, str):
-            raise ValueError("Invalid VM name")
-        if not isinstance(memory, int) or memory < 256:
-            raise ValueError("Memory must be at least 256MB")
-        if not isinstance(vcpus, int) or vcpus < 1:
-            raise ValueError("Must have at least 1 vCPU")
-        if not isinstance(disk_size, int) or disk_size < 1:
-            raise ValueError("Disk size must be at least 1GB")
-        if not network or not isinstance(network, str):
-            raise ValueError("Invalid network name")
-
-        # Create VM using libvirt
-        conn = libvirt.open("qemu:///system")
-        if conn is None:
-            raise Exception("Failed to connect to libvirt")
-
-        # Create VM configuration
-        xml = f"""
-        <domain type='kvm'>
-            <name>{name}</name>
-            <memory unit='MiB'>{memory}</memory>
-            <vcpu>{vcpus}</vcpu>
-            <os>
-                <type arch='x86_64' machine='pc'>hvm</type>
-                <boot dev='hd'/>
-            </os>
-            <devices>
-                <disk type='file' device='disk'>
-                    <driver name='qemu' type='qcow2'/>
-                    <source file='/var/lib/libvirt/images/{name}.qcow2'/>
-                    <target dev='vda' bus='virtio'/>
-                </disk>
-                <interface type='network'>
-                    <source network='{network}'/>
-                    <model type='virtio'/>
-                </interface>
-                <graphics type='vnc' port='-1' autoport='yes'/>
-            </devices>
-        </domain>
-        """
-
-        # Create VM
-        dom = conn.defineXML(xml)
-        if dom is None:
-            raise Exception("Failed to define VM")
-
-        # Start VM
-        if dom.create() < 0:
-            raise Exception("Failed to start VM")
-
-        return {"status": "success", "message": f"VM {name} created successfully"}
-
-    except Exception as e:
-        raise Exception(f"Failed to create VM: {str(e)}")
-
-async def handle_delete_vm(name: str) -> dict:
-    """Delete a VM"""
-    try:
-        if not name or not isinstance(name, str):
-            raise ValueError("Invalid VM name")
-
-        conn = libvirt.open("qemu:///system")
-        if conn is None:
-            raise Exception("Failed to connect to libvirt")
-
-        dom = conn.lookupByName(name)
-        if dom is None:
-            raise Exception(f"VM {name} not found")
-
-        # Destroy VM if running
-        if dom.isActive():
-            dom.destroy()
-
-        # Undefine VM
-        dom.undefine()
-
-        return {"status": "success", "message": f"VM {name} deleted successfully"}
-
-    except Exception as e:
-        raise Exception(f"Failed to delete VM: {str(e)}")
-
-async def handle_list_vms() -> dict:
-    """List all VMs"""
-    try:
-        conn = libvirt.open("qemu:///system")
-        if conn is None:
-            raise Exception("Failed to connect to libvirt")
-
-        domains = conn.listAllDomains()
-        vms = []
-
-        for dom in domains:
-            vms.append({
-                "name": dom.name(),
-                "state": dom.state()[0],
-                "memory": dom.maxMemory(),
-                "vcpus": dom.maxVcpus()
-            })
-
-        return {"vms": vms}
-
-    except Exception as e:
-        raise Exception(f"Failed to list VMs: {str(e)}")
-
-async def handle_get_vm_info(name: str) -> dict:
-    """Get detailed information about a VM"""
-    try:
-        if not name or not isinstance(name, str):
-            raise ValueError("Invalid VM name")
-
-        conn = libvirt.open("qemu:///system")
-        if conn is None:
-            raise Exception("Failed to connect to libvirt")
-
-        dom = conn.lookupByName(name)
-        if dom is None:
-            raise Exception(f"VM {name} not found")
-
-        info = dom.info()
-        return {
-            "name": dom.name(),
-            "state": info[0],
-            "memory": info[1],
-            "vcpus": info[3],
-            "cpu_time": info[4]
-        }
-
-    except Exception as e:
-        raise Exception(f"Failed to get VM info: {str(e)}")
-
-async def handle_initialize(protocolVersion: str = "1.0", capabilities: dict = None, clientInfo: dict = None) -> dict:
-    """Handle initialization request"""
-    return {
-        "protocolVersion": protocolVersion,
-        "serverInfo": {
-            "name": "kvm-control",
-            "version": "1.0.0"
-        },
-        "capabilities": {
-            "vmManagement": True,
-            "networkManagement": True,
-            "storageManagement": True
-        }
-    }
+async def shutdown(sig_name=None):
+    """Cleanup handler for graceful shutdown"""
+    if sig_name:
+        logger.info(f"Received {sig_name}, shutting down")
+    
+    # Close all connections in the pool
+    await connection_pool.close_all()
+    
+    # Cancel pending tasks
+    tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+    for task in tasks:
+        task.cancel()
+    
+    await asyncio.gather(*tasks, return_exceptions=True)
+    
+    # Stop the event loop
+    loop = asyncio.get_running_loop()
+    loop.stop()
 
 if __name__ == "__main__":
     asyncio.run(main()) 
