@@ -1,0 +1,12 @@
+{
+    "vm": {
+        "disk_path": "/vm",
+        "default_iso": "/iso/ubuntu-24.04.2-live-server-amd64.iso",
+        "default_name": "puppy",
+        "default_memory": 2048,
+        "default_vcpus": 2,
+        "default_disk_size": 20,
+        "default_os_variant": "generic",
+        "default_network": "brforvms"
+    }
+} 

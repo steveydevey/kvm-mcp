@@ -7,6 +7,14 @@ from mcp.server.models import InitializationOptions
 import asyncio
 import json
 
+# Load configuration
+def load_config():
+    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
+    with open(config_path) as f:
+        return json.load(f)
+
+config = load_config()
+
 server = Server("kvm-control")
 
 @server.call_tool()
@@ -127,22 +135,19 @@ async def create_vm(name: str, arguments: dict) -> dict:
     """Create a new virtual machine using virt-install"""
     try:
         # Required parameters
-        vm_name = arguments.get("name")
-        memory = arguments.get("memory", 2048)  # Default 2GB
-        vcpus = arguments.get("vcpus", 2)      # Default 2 vCPUs
-        disk_size = arguments.get("disk_size", 20)  # Default 20GB
-        os_variant = arguments.get("os_variant", "generic")
-        
-        if not vm_name:
-            return {"status": "error", "message": "VM name not provided"}
+        vm_name = arguments.get("name", config["vm"]["default_name"])
+        memory = arguments.get("memory", config["vm"]["default_memory"])
+        vcpus = arguments.get("vcpus", config["vm"]["default_vcpus"])
+        disk_size = arguments.get("disk_size", config["vm"]["default_disk_size"])
+        os_variant = arguments.get("os_variant", config["vm"]["default_os_variant"])
         
         # Optional parameters
         location = arguments.get("location")  # URL for network installation
-        cdrom = arguments.get("cdrom")       # Path to ISO
+        cdrom = arguments.get("cdrom", config["vm"]["default_iso"])  # Path to ISO
         extra_args = arguments.get("extra_args", "")
         
-        # Ensure /vm directory exists
-        os.makedirs("/vm", exist_ok=True)
+        # Ensure VM directory exists
+        os.makedirs(config["vm"]["disk_path"], exist_ok=True)
         
         # Build virt-install command
         cmd = [
@@ -150,9 +155,9 @@ async def create_vm(name: str, arguments: dict) -> dict:
             f"--name={vm_name}",
             f"--memory={memory}",
             f"--vcpus={vcpus}",
-            f"--disk=path=/vm/{vm_name}.qcow2,size={disk_size}",
+            f"--disk=path={os.path.join(config['vm']['disk_path'], f'{vm_name}.qcow2')},size={disk_size}",
             f"--os-variant={os_variant}",
-            "--network=bridge=brforvms,model=virtio",
+            f"--network=bridge={config['vm']['default_network']},model=virtio",
             "--graphics=vnc,listen=0.0.0.0",
             "--console=pty,target_type=serial",
             "--noautoconsole",
