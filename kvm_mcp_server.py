@@ -280,6 +280,7 @@ async def create_vm(name: str, arguments: dict) -> dict:
                 <channel type='unix'>
                     <target type='virtio' name='org.qemu.guest_agent.0'/>
                 </channel>
+                {f'<sysinfo type="fwcfg"><entry name="opt/com.coreos/config" file="{ignition_config}"/></sysinfo>' if ignition_config else ''}
             </devices>
         </domain>
         '''
