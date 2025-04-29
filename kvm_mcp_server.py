@@ -122,6 +122,107 @@ async def reboot_vm(name: str, arguments: dict) -> dict:
     except libvirt.libvirtError as e:
         return {"status": "error", "message": str(e)}
 
+@server.call_tool()
+async def create_vm(name: str, arguments: dict) -> dict:
+    """Create a new virtual machine using virt-install"""
+    try:
+        # Required parameters
+        vm_name = arguments.get("name")
+        memory = arguments.get("memory", 2048)  # Default 2GB
+        vcpus = arguments.get("vcpus", 2)      # Default 2 vCPUs
+        disk_size = arguments.get("disk_size", 20)  # Default 20GB
+        os_variant = arguments.get("os_variant", "generic")
+        
+        if not vm_name:
+            return {"status": "error", "message": "VM name not provided"}
+        
+        # Optional parameters
+        location = arguments.get("location")  # URL for network installation
+        cdrom = arguments.get("cdrom")       # Path to ISO
+        extra_args = arguments.get("extra_args", "")
+        
+        # Ensure /vm directory exists
+        os.makedirs("/vm", exist_ok=True)
+        
+        # Build virt-install command
+        cmd = [
+            "virt-install",
+            f"--name={vm_name}",
+            f"--memory={memory}",
+            f"--vcpus={vcpus}",
+            f"--disk=path=/vm/{vm_name}.qcow2,size={disk_size}",
+            f"--os-variant={os_variant}",
+            "--network=bridge=brforvms,model=virtio",
+            "--graphics=vnc,listen=0.0.0.0",
+            "--console=pty,target_type=serial",
+            "--noautoconsole",
+            "--virt-type=kvm"
+        ]
+        
+        # Add installation source
+        if location:
+            cmd.append(f"--location={location}")
+        elif cdrom:
+            cmd.append(f"--cdrom={cdrom}")
+        else:
+            return {"status": "error", "message": "Either location or cdrom must be provided"}
+        
+        # Add extra arguments if provided
+        if extra_args:
+            cmd.append(f"--extra-args={extra_args}")
+        
+        # Execute virt-install
+        import subprocess
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        
+        if result.returncode == 0:
+            return {
+                "status": "success",
+                "message": f"VM {vm_name} creation started successfully",
+                "output": result.stdout
+            }
+        else:
+            return {
+                "status": "error",
+                "message": f"Failed to create VM {vm_name}",
+                "error": result.stderr
+            }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@server.call_tool()
+async def get_vnc_ports(name: str, arguments: dict) -> dict:
+    """Get VNC ports for all running VMs"""
+    try:
+        import subprocess
+        import json
+        
+        # Get list of running VMs
+        result = subprocess.run(['virsh', 'list', '--name'], capture_output=True, text=True)
+        if result.returncode != 0:
+            return {"status": "error", "message": "Failed to get VM list", "error": result.stderr}
+        
+        vms = [vm.strip() for vm in result.stdout.splitlines() if vm.strip()]
+        vnc_ports = {}
+        
+        # Get VNC port for each VM
+        for vm in vms:
+            port_result = subprocess.run(['virsh', 'vncdisplay', vm], capture_output=True, text=True)
+            if port_result.returncode == 0:
+                port = port_result.stdout.strip()
+                if port:
+                    # Convert display number to actual port (e.g., ":1" -> 5901)
+                    display_num = port.lstrip(':')
+                    if display_num.isdigit():
+                        vnc_ports[vm] = 5900 + int(display_num)
+        
+        return {
+            "status": "success",
+            "vnc_ports": vnc_ports
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
 async def handle_request(request_str):
     request = json.loads(request_str)
     if request["method"] == "initialize":
@@ -141,6 +242,20 @@ async def handle_request(request_str):
         tool_name = request["params"]["name"]
         if tool_name == "list_vms":
             result = await list_vms(tool_name, request["params"].get("arguments", {}))
+            return {
+                "jsonrpc": "2.0",
+                "id": request["id"],
+                "result": result
+            }
+        elif tool_name == "create_vm":
+            result = await create_vm(tool_name, request["params"].get("arguments", {}))
+            return {
+                "jsonrpc": "2.0",
+                "id": request["id"],
+                "result": result
+            }
+        elif tool_name == "get_vnc_ports":
+            result = await get_vnc_ports(tool_name, request["params"].get("arguments", {}))
             return {
                 "jsonrpc": "2.0",
                 "id": request["id"],
