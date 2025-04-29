@@ -6,6 +6,8 @@ from mcp.server.stdio import stdio_server
 from mcp.server.models import InitializationOptions
 import asyncio
 import json
+import subprocess
+import time
 
 # Load configuration
 def load_config():
@@ -208,153 +210,98 @@ WantedBy=multi-user.target"""
 
 @server.call_tool()
 async def create_vm(name: str, arguments: dict) -> dict:
-    """Create a new virtual machine using virt-install or from a master image"""
+    """Create a new VM from a master image or installation source."""
     try:
-        # Required parameters
-        vm_name = arguments.get("name", config["vm"]["default_name"])
-        memory = arguments.get("memory", config["vm"]["default_memory"])
-        vcpus = arguments.get("vcpus", config["vm"]["default_vcpus"])
-        disk_size = arguments.get("disk_size", config["vm"]["default_disk_size"])
-        os_variant = arguments.get("os_variant", config["vm"]["default_os_variant"])
-        
-        # Optional parameters
-        location = arguments.get("location")  # URL for network installation
-        cdrom = arguments.get("cdrom", config["vm"]["default_iso"])  # Path to ISO
-        extra_args = arguments.get("extra_args", "")
-        master_image = arguments.get("master_image", config["vm"]["default_master_image"])  # Path to master qcow2 image
-        
-        # Ensure VM directory exists
-        os.makedirs(config["vm"]["disk_path"], exist_ok=True)
-        
+        # Check if VM already exists
+        conn = libvirt.open('qemu:///system')
+        if conn is None:
+            return {"status": "error", "message": "Failed to connect to libvirt daemon"}
+
+        try:
+            domain = conn.lookupByName(name)
+            if domain:
+                return {"status": "error", "message": f"VM '{name}' already exists"}
+        except libvirt.libvirtError:
+            pass
+        finally:
+            conn.close()
+
+        # Get parameters with defaults
+        vm_name = arguments.get('name', name)
+        memory = arguments.get('memory', 2048)
+        vcpus = arguments.get('vcpus', 2)
+        disk_size = arguments.get('disk_size', 20)
+        os_variant = arguments.get('os_variant', 'fedora-coreos')
+        master_image = arguments.get('master_image')
+        ignition = arguments.get('ignition', {})
+
+        # Create disk image from master
         if master_image:
-            # Create VM from master image
-            if not os.path.exists(master_image):
-                return {"status": "error", "message": f"Master image {master_image} not found"}
-            
-            # Create a copy of the master image
-            import subprocess
-            disk_path = os.path.join(config["vm"]["disk_path"], f"{vm_name}.qcow2")
-            result = subprocess.run(["qemu-img", "create", "-f", "qcow2", "-b", master_image, disk_path], 
-                                  capture_output=True, text=True)
-            
-            if result.returncode != 0:
-                return {
-                    "status": "error",
-                    "message": f"Failed to create disk image for VM {vm_name}",
-                    "error": result.stderr
-                }
-            
-            # Generate Ignition config
-            try:
-                ignition_config = generate_ignition_config(vm_name, arguments)
-                ignition_path = os.path.join(config["vm"]["disk_path"], f"{vm_name}.ign")
-                with open(ignition_path, 'w') as f:
-                    f.write(ignition_config)
-            except Exception as e:
-                return {"status": "error", "message": str(e)}
-            
-            # Create VM definition
-            xml = f"""<domain type='kvm'>
-                <name>{vm_name}</name>
-                <memory unit='MiB'>{memory}</memory>
-                <vcpu placement='static'>{vcpus}</vcpu>
-                <os>
-                    <type arch='x86_64' machine='pc-q35-7.2'>hvm</type>
-                    <boot dev='hd'/>
-                </os>
-                <features>
-                    <acpi/>
-                    <apic/>
-                    <vmport state='off'/>
-                </features>
-                <cpu mode='host-model' check='partial'/>
-                <clock offset='utc'/>
-                <on_poweroff>destroy</on_poweroff>
-                <on_reboot>restart</on_reboot>
-                <on_crash>destroy</on_crash>
-                <devices>
-                    <emulator>/usr/bin/qemu-system-x86_64</emulator>
-                    <disk type='file' device='disk'>
-                        <driver name='qemu' type='qcow2'/>
-                        <source file='{disk_path}'/>
-                        <target dev='vda' bus='virtio'/>
-                    </disk>
-                    <interface type='bridge'>
-                        <source bridge='{config["vm"]["default_network"]}'/>
-                        <model type='virtio'/>
-                    </interface>
-                    <graphics type='vnc' port='-1' listen='0.0.0.0'/>
-                    <console type='pty'/>
-                </devices>
-                <qemu:commandline>
-                    <qemu:arg value='-fw_cfg'/>
-                    <qemu:arg value='name=opt/com.coreos/config,file={ignition_path}'/>
-                </qemu:commandline>
-            </domain>"""
-            
-            # Define and start the VM
-            conn = libvirt.open('qemu:///system')
-            if conn is None:
-                return {"status": "error", "message": "Failed to connect to libvirt daemon"}
-            
-            try:
-                domain = conn.defineXML(xml)
-                if domain.create() == 0:
-                    return {
-                        "status": "success",
-                        "message": f"VM {vm_name} created and started successfully from master image"
-                    }
-                else:
-                    return {
-                        "status": "error",
-                        "message": f"Failed to start VM {vm_name}"
-                    }
-            finally:
-                conn.close()
-        else:
-            # Original installation-based VM creation
-            cmd = [
-                "virt-install",
-                f"--name={vm_name}",
-                f"--memory={memory}",
-                f"--vcpus={vcpus}",
-                f"--disk=path={os.path.join(config['vm']['disk_path'], f'{vm_name}.qcow2')},size={disk_size}",
-                f"--os-variant={os_variant}",
-                f"--network=bridge={config['vm']['default_network']},model=virtio",
-                "--graphics=vnc,listen=0.0.0.0",
-                "--console=pty,target_type=serial",
-                "--noautoconsole",
-                "--virt-type=kvm"
-            ]
-            
-            # Add installation source
-            if location:
-                cmd.append(f"--location={location}")
-            elif cdrom:
-                cmd.append(f"--cdrom={cdrom}")
-            else:
-                return {"status": "error", "message": "Either location, cdrom, or master_image must be provided"}
-            
-            # Add extra arguments if provided
-            if extra_args:
-                cmd.append(f"--extra-args={extra_args}")
-            
-            # Execute virt-install
-            import subprocess
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            
-            if result.returncode == 0:
-                return {
-                    "status": "success",
-                    "message": f"VM {vm_name} creation started successfully",
-                    "output": result.stdout
-                }
-            else:
-                return {
-                    "status": "error",
-                    "message": f"Failed to create VM {vm_name}",
-                    "error": result.stderr
-                }
+            disk_path = f"/vm/{vm_name}.qcow2"
+            subprocess.run(['qemu-img', 'create', '-f', 'qcow2', '-F', 'qcow2', '-b', master_image, disk_path, f'{disk_size}G'], check=True)
+
+        # Generate Ignition config if provided
+        ignition_config = None
+        if ignition:
+            ignition_config = generate_ignition_config(vm_name, ignition)
+
+        # Define VM XML
+        vm_xml = f'''
+        <domain type='kvm'>
+            <name>{vm_name}</name>
+            <memory unit='MiB'>{memory}</memory>
+            <vcpu placement='static'>{vcpus}</vcpu>
+            <os>
+                <type arch='x86_64' machine='q35'>hvm</type>
+                <boot dev='hd'/>
+            </os>
+            <features>
+                <acpi/>
+                <apic/>
+            </features>
+            <cpu mode='host-passthrough' check='none'/>
+            <clock offset='utc'/>
+            <on_poweroff>destroy</on_poweroff>
+            <on_reboot>restart</on_reboot>
+            <on_crash>destroy</on_crash>
+            <devices>
+                <emulator>/usr/bin/qemu-system-x86_64</emulator>
+                <disk type='file' device='disk'>
+                    <driver name='qemu' type='qcow2'/>
+                    <source file='{disk_path}'/>
+                    <target dev='vda' bus='virtio'/>
+                </disk>
+                <interface type='bridge'>
+                    <source bridge='brforvms'/>
+                    <model type='virtio'/>
+                </interface>
+                <graphics type='vnc' port='-1' autoport='yes' listen='0.0.0.0'/>
+                <console type='pty'/>
+                <channel type='unix'>
+                    <target type='virtio' name='org.qemu.guest_agent.0'/>
+                </channel>
+            </devices>
+        </domain>
+        '''
+
+        # Connect to libvirt and define VM
+        conn = libvirt.open('qemu:///system')
+        if conn is None:
+            return {"status": "error", "message": "Failed to connect to libvirt daemon"}
+
+        try:
+            # Define the VM
+            domain = conn.defineXML(vm_xml)
+            if domain is None:
+                return {"status": "error", "message": "Failed to define VM"}
+
+            # Start the VM
+            if domain.create() < 0:
+                return {"status": "error", "message": "Failed to start VM"}
+
+            return {"status": "success", "message": f"VM {vm_name} created and started successfully from master image"}
+        finally:
+            conn.close()
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
@@ -390,6 +337,23 @@ async def get_vnc_ports(name: str, arguments: dict) -> dict:
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+def get_vm_ip(domain):
+    """Get the IP address of a VM."""
+    try:
+        # Wait for the VM to get an IP address
+        for _ in range(30):  # Try for 30 seconds
+            ifaces = domain.interfaceAddresses(libvirt.VIR_DOMAIN_INTERFACE_ADDRESSES_SRC_LEASE)
+            if ifaces:
+                for (name, val) in ifaces.items():
+                    if val['addrs']:
+                        for addr in val['addrs']:
+                            if addr['type'] == libvirt.VIR_IP_ADDR_TYPE_IPV4:
+                                return addr['addr']
+            time.sleep(1)
+        return None
+    except Exception:
+        return None
 
 async def handle_request(request_str):
     request = json.loads(request_str)
