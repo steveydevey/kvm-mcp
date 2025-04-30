@@ -120,3 +120,5 @@ Detected format of qcow2.
 2025-04-29 22:53:27,457 - kvm_mcp - INFO - Starting KVM MCP server
 2025-04-29 22:53:27,491 - kvm_mcp - INFO - Received EOF, shutting down
 2025-04-29 22:53:27,491 - kvm_mcp - INFO - Cleaning up resources
+2025-04-30 11:07:39,999 - kvm_mcp - INFO - Starting KVM MCP server
+2025-04-30 12:08:50,383 - kvm_mcp - INFO - Starting KVM MCP server
