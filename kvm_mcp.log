@@ -84,3 +84,39 @@ Detected format of qcow2.
 2025-04-29 17:03:10,925 - kvm_mcp - INFO - Starting KVM MCP server
 2025-04-29 17:03:11,289 - kvm_mcp - INFO - Received EOF, shutting down
 2025-04-29 17:03:11,289 - kvm_mcp - INFO - Cleaning up resources
+2025-04-29 21:37:30,994 - kvm_mcp - INFO - Starting KVM MCP server
+2025-04-29 21:37:30,995 - kvm_mcp - INFO - Fetching VM list from libvirt
+2025-04-29 21:37:30,997 - kvm_mcp - WARNING - Error getting info for domain casa: Requested operation is not valid: domain is not running
+2025-04-29 21:37:30,999 - kvm_mcp - WARNING - Error getting info for domain synapse: Requested operation is not valid: domain is not running
+2025-04-29 21:37:31,001 - kvm_mcp - WARNING - Error getting info for domain kiwix: Requested operation is not valid: domain is not running
+2025-04-29 21:37:31,003 - kvm_mcp - WARNING - Error getting info for domain test-vm: Requested operation is not valid: domain is not running
+2025-04-29 21:37:31,005 - kvm_mcp - INFO - Received EOF, shutting down
+2025-04-29 21:37:31,005 - kvm_mcp - INFO - Cleaning up resources
+2025-04-29 21:37:37,987 - kvm_mcp - INFO - Starting KVM MCP server
+2025-04-29 21:37:39,096 - kvm_mcp - INFO - Received EOF, shutting down
+2025-04-29 21:37:39,096 - kvm_mcp - INFO - Cleaning up resources
+2025-04-29 21:37:47,444 - kvm_mcp - INFO - Starting KVM MCP server
+2025-04-29 21:37:47,445 - kvm_mcp - INFO - Starting VM: tangle
+2025-04-29 21:37:47,446 - kvm_mcp - WARNING - VM tangle is already running
+2025-04-29 21:37:47,454 - kvm_mcp - INFO - Received EOF, shutting down
+2025-04-29 21:37:47,454 - kvm_mcp - INFO - Cleaning up resources
+2025-04-29 21:37:53,479 - kvm_mcp - INFO - Starting KVM MCP server
+2025-04-29 21:37:53,913 - kvm_mcp - INFO - Received EOF, shutting down
+2025-04-29 21:37:53,913 - kvm_mcp - INFO - Cleaning up resources
+2025-04-29 22:53:13,891 - kvm_mcp - INFO - Starting KVM MCP server
+2025-04-29 22:53:13,892 - kvm_mcp - INFO - Stopping VM: tangle
+2025-04-29 22:53:13,893 - kvm_mcp - ERROR - Libvirt connection error: Domain not found: no domain with matching name 'tangle'
+2025-04-29 22:53:13,900 - kvm_mcp - ERROR - Error stopping VM tangle: Domain not found: no domain with matching name 'tangle'
+2025-04-29 22:53:13,901 - kvm_mcp - INFO - Received EOF, shutting down
+2025-04-29 22:53:13,901 - kvm_mcp - INFO - Cleaning up resources
+2025-04-29 22:53:19,496 - kvm_mcp - INFO - Starting KVM MCP server
+2025-04-29 22:53:19,496 - kvm_mcp - INFO - Fetching VM list from libvirt
+2025-04-29 22:53:19,498 - kvm_mcp - WARNING - Error getting info for domain casa: Requested operation is not valid: domain is not running
+2025-04-29 22:53:19,499 - kvm_mcp - WARNING - Error getting info for domain synapse: Requested operation is not valid: domain is not running
+2025-04-29 22:53:19,501 - kvm_mcp - WARNING - Error getting info for domain kiwix: Requested operation is not valid: domain is not running
+2025-04-29 22:53:19,502 - kvm_mcp - WARNING - Error getting info for domain test-vm: Requested operation is not valid: domain is not running
+2025-04-29 22:53:19,504 - kvm_mcp - INFO - Received EOF, shutting down
+2025-04-29 22:53:19,504 - kvm_mcp - INFO - Cleaning up resources
+2025-04-29 22:53:27,457 - kvm_mcp - INFO - Starting KVM MCP server
+2025-04-29 22:53:27,491 - kvm_mcp - INFO - Received EOF, shutting down
+2025-04-29 22:53:27,491 - kvm_mcp - INFO - Cleaning up resources
