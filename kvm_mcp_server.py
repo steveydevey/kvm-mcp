@@ -426,11 +426,11 @@ def generate_ignition_config(vm_name: str, arguments: dict) -> str:
                     }
                 },
                 {
-                    "path": "/etc/locale.conf",
+                    "path": "/etc/hosts",
                     "mode": 420,
                     "overwrite": True,
                     "contents": {
-                        "source": f"data:,LANG={locale}"
+                        "source": f"data:,127.0.0.1   localhost localhost.localdomain localhost4 localhost4.localdomain4\n::1         localhost localhost.localdomain localhost6 localhost6.localdomain6\n127.0.1.1   {hostname} {hostname}.localdomain"
                     }
                 }
             ]
@@ -461,8 +461,11 @@ WantedBy=multi-user.target"""
 
 @server.call_tool()
 async def create_vm(name: str, arguments: dict) -> dict:
-    """Create a new VM"""
-    conn = None
+    """Create a new CoreOS VM using virt-install as per Fedora CoreOS documentation"""
+    import shlex
+    import tempfile
+    import os
+    import subprocess
     try:
         # Extract parameters from arguments
         vm_name = arguments.get("name")
@@ -471,108 +474,85 @@ async def create_vm(name: str, arguments: dict) -> dict:
         disk_size = arguments.get("disk_size", 20)
         network = arguments.get("network", "brforvms")
         master_image = arguments.get("master_image")
+        ignition = arguments.get("ignition")
+        os_variant = arguments.get("os_variant", "fedora-coreos-stable")
 
         # Validate parameters
         if not vm_name or not isinstance(vm_name, str):
             return {"status": "error", "message": "Invalid VM name"}
-        
         if any(c in "!@#$%^&*()+={}[]|\\:;\"'<>?/" for c in vm_name):
             return {"status": "error", "message": "VM name contains invalid characters"}
-        
         if not isinstance(memory, int) or memory < 256:
             return {"status": "error", "message": "Memory must be at least 256MB"}
-        
-        if memory > 1024 * 1024:  # 1TB limit
+        if memory > 1024 * 1024:
             return {"status": "error", "message": "Memory exceeds maximum limit of 1TB"}
-        
         if not isinstance(vcpus, int) or vcpus < 1:
             return {"status": "error", "message": "Must have at least 1 vCPU"}
-        
-        if vcpus > 128:  # 128 vCPU limit
+        if vcpus > 128:
             return {"status": "error", "message": "vCPUs exceed maximum limit of 128"}
-        
         if not isinstance(disk_size, int) or disk_size < 1:
             return {"status": "error", "message": "Disk size must be at least 1GB"}
-        
-        if disk_size > 10000:  # 10TB limit
+        if disk_size > 10000:
             return {"status": "error", "message": "Disk size exceeds maximum limit of 10TB"}
-        
         if not network or not isinstance(network, str):
             return {"status": "error", "message": "Invalid network name"}
+        if not master_image or not os.path.exists(master_image):
+            return {"status": "error", "message": f"Master image {master_image} does not exist"}
+        if not ignition or not isinstance(ignition, dict):
+            return {"status": "error", "message": "Ignition config must be provided as a dict"}
 
-        # Create VM using libvirt
-        conn = libvirt.open("qemu:///system")
-        if conn is None:
-            return {"status": "error", "message": "Failed to connect to libvirt daemon"}
-
-        # Check if VM already exists
-        try:
-            existing_dom = conn.lookupByName(vm_name)
-            if existing_dom is not None:
-                return {"status": "error", "message": f"VM {vm_name} already exists"}
-        except libvirt.libvirtError as e:
-            if "domain not found" not in str(e).lower():
-                return {"status": "error", "message": str(e)}
-
-        # Create disk image
+        # Prepare disk path
         disk_path = f"/vm/{vm_name}.qcow2"
         if os.path.exists(disk_path):
             return {"status": "error", "message": f"Disk image {disk_path} already exists"}
 
-        # Create the disk image using qemu-img
-        result = subprocess.run(
-            ["qemu-img", "create", "-f", "qcow2", disk_path, f"{disk_size}G"],
-            capture_output=True,
-            text=True
-        )
+        # Create disk image with backing file
+        result = subprocess.run([
+            "qemu-img", "create", "-f", "qcow2", "-F", "qcow2", "-b", master_image, disk_path, f"{disk_size}G"
+        ], capture_output=True, text=True)
         if result.returncode != 0:
             return {"status": "error", "message": f"Failed to create disk image: {result.stderr}"}
 
-        # Create VM configuration
-        xml = f"""
-        <domain type='kvm'>
-            <name>{vm_name}</name>
-            <memory unit='MiB'>{memory}</memory>
-            <vcpu>{vcpus}</vcpu>
-            <os>
-                <type arch='x86_64' machine='pc'>hvm</type>
-                <boot dev='hd'/>
-            </os>
-            <devices>
-                <disk type='file' device='disk'>
-                    <driver name='qemu' type='qcow2'/>
-                    <source file='{disk_path}'/>
-                    <target dev='vda' bus='virtio'/>
-                </disk>
-                <interface type='bridge'>
-                    <source bridge='brforvms'/>
-                    <model type='virtio'/>
-                </interface>
-                <graphics type='vnc' port='-1' autoport='yes' listen='0.0.0.0'/>
-            </devices>
-        </domain>
-        """
+        # Write Ignition config to a temp file
+        with tempfile.NamedTemporaryFile("w", delete=False, suffix=".ign") as ign_file:
+            import json
+            ign_file.write(json.dumps(ignition, indent=2))
+            ign_path = ign_file.name
 
-        # Create VM
-        dom = conn.defineXML(xml)
-        if dom is None:
-            return {"status": "error", "message": "Failed to define VM"}
+        # Set SELinux context if needed (Fedora/SELinux hosts)
+        try:
+            subprocess.run(["chcon", "--verbose", "--type", "svirt_home_t", ign_path], check=False)
+        except Exception:
+            pass
 
-        # Start VM
-        if dom.create() < 0:
-            return {"status": "error", "message": "Failed to start VM"}
+        # Build virt-install command
+        virtinstall_cmd = [
+            "virt-install",
+            "--connect=qemu:///system",
+            f"--name={vm_name}",
+            f"--memory={memory}",
+            f"--vcpus={vcpus}",
+            f"--os-variant={os_variant}",
+            "--import",
+            f"--disk=path={disk_path},format=qcow2,bus=virtio",
+            f"--network=bridge={network},model=virtio",
+            "--graphics=vnc,listen=0.0.0.0",
+            f"--qemu-commandline=optargs='-fw_cfg name=opt/com.coreos/config,file={ign_path}'"
+        ]
 
-        return {"status": "success", "message": f"VM {vm_name} created successfully"}
+        # Run virt-install
+        result = subprocess.run(virtinstall_cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            # Clean up temp ignition file
+            os.unlink(ign_path)
+            return {"status": "error", "message": f"virt-install failed: {result.stderr}"}
 
-    except libvirt.libvirtError as e:
-        return {"status": "error", "message": f"Libvirt error: {str(e)}"}
-    except subprocess.SubprocessError as e:
-        return {"status": "error", "message": f"Subprocess error: {str(e)}"}
+        # Clean up temp ignition file
+        os.unlink(ign_path)
+        return {"status": "success", "message": f"VM {vm_name} created successfully using virt-install"}
+
     except Exception as e:
         return {"status": "error", "message": f"Unexpected error: {str(e)}"}
-    finally:
-        if conn:
-            conn.close()
 
 @server.call_tool()
 async def get_vnc_ports(name: str, arguments: dict) -> dict:
