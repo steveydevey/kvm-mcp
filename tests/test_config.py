@@ -2,7 +2,7 @@ import pytest
 import os
 import json
 from unittest.mock import patch, mock_open
-from kvm_mcp_server import load_config
+from kvm_mcp_server import _apply_env_overrides, load_config
 
 def test_load_valid_config():
     """Test loading a valid configuration file"""
@@ -164,4 +164,122 @@ def test_nested_environment_variable_override():
         assert config["parent"]["child"]["value"] == "override"
     
     # Clean up
-    del os.environ["PARENT_CHILD_VALUE"] 
+    del os.environ["PARENT_CHILD_VALUE"]
+
+def test_apply_env_overrides_basic():
+    """Test basic environment variable overrides"""
+    config = {
+        "key1": "value1",
+        "key2": 42,
+        "key3": True
+    }
+    
+    with patch.dict(os.environ, {
+        "KEY1": "new_value1",
+        "KEY2": "99",
+        "KEY3": "false"
+    }):
+        result = _apply_env_overrides(config)
+        assert result["key1"] == "new_value1"
+        assert result["key2"] == 99
+        assert result["key3"] is False
+
+def test_apply_env_overrides_nested():
+    """Test nested configuration overrides"""
+    config = {
+        "section1": {
+            "key1": "value1",
+            "key2": 42
+        },
+        "section2": {
+            "key3": True
+        }
+    }
+    
+    with patch.dict(os.environ, {
+        "SECTION1_KEY1": "new_value1",
+        "SECTION1_KEY2": "99",
+        "SECTION2_KEY3": "false"
+    }):
+        result = _apply_env_overrides(config)
+        assert result["section1"]["key1"] == "new_value1"
+        assert result["section1"]["key2"] == 99
+        assert result["section2"]["key3"] is False
+
+def test_apply_env_overrides_invalid_values():
+    """Test handling of invalid environment variable values"""
+    config = {
+        "key1": 42,
+        "key2": True,
+        "key3": 3.14
+    }
+    
+    with patch.dict(os.environ, {
+        "KEY1": "not_a_number",
+        "KEY2": "not_a_boolean",
+        "KEY3": "not_a_float"
+    }):
+        result = _apply_env_overrides(config)
+        assert result["key1"] == 42  # Original value preserved
+        assert result["key2"] is True  # Original value preserved
+        assert result["key3"] == 3.14  # Original value preserved
+
+def test_apply_env_overrides_empty_strings():
+    """Test handling of empty string values"""
+    config = {
+        "key1": "value1",
+        "key2": 42,
+        "key3": True
+    }
+    
+    with patch.dict(os.environ, {
+        "KEY1": "",
+        "KEY2": "",
+        "KEY3": ""
+    }):
+        result = _apply_env_overrides(config)
+        assert result["key1"] == ""  # Empty string allowed for strings
+        assert result["key2"] == 42  # Original value preserved for non-strings
+        assert result["key3"] is True  # Original value preserved for non-strings
+
+def test_load_config_success():
+    """Test successful loading of configuration"""
+    config_data = {
+        "key1": "value1",
+        "key2": 42,
+        "key3": True
+    }
+    
+    mock_file = mock_open(read_data=json.dumps(config_data))
+    with patch("builtins.open", mock_file):
+        result = load_config()
+        assert result == config_data
+
+def test_load_config_file_not_found():
+    """Test handling of missing configuration file"""
+    with patch("builtins.open", side_effect=FileNotFoundError):
+        with pytest.raises(FileNotFoundError):
+            load_config()
+
+def test_load_config_invalid_json():
+    """Test handling of invalid JSON in configuration file"""
+    mock_file = mock_open(read_data="invalid json")
+    with patch("builtins.open", mock_file):
+        with pytest.raises(json.JSONDecodeError):
+            load_config()
+
+def test_load_config_with_env_overrides():
+    """Test loading configuration with environment variable overrides"""
+    config_data = {
+        "key1": "value1",
+        "key2": 42,
+        "key3": True
+    }
+    
+    mock_file = mock_open(read_data=json.dumps(config_data))
+    with patch("builtins.open", mock_file), \
+         patch.dict(os.environ, {"KEY1": "new_value1"}):
+        result = load_config()
+        assert result["key1"] == "new_value1"
+        assert result["key2"] == 42
+        assert result["key3"] is True 

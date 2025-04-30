@@ -4,25 +4,28 @@ from kvm_mcp_server import handle_request
 import json
 
 @pytest.mark.asyncio
-async def test_initialize_request():
+async def test_initialize_request(mock_libvirt_conn):
     """Test initialization request handling"""
-    request = {
-        "jsonrpc": "2.0",
-        "method": "initialize",
-        "params": {
-            "protocolVersion": "1.0",
-            "capabilities": {},
-            "clientInfo": {"name": "test-client"}
-        },
-        "id": 1
-    }
-    
-    response = await handle_request(json.dumps(request))
-    assert response["jsonrpc"] == "2.0"
-    assert response["id"] == 1
-    assert "result" in response
-    assert response["result"]["protocolVersion"] == "1.0"
-    assert response["result"]["serverInfo"]["name"] == "kvm-control"
+    with patch('libvirt.open') as mock_open:
+        mock_open.return_value = mock_libvirt_conn
+        
+        request = {
+            "jsonrpc": "2.0",
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "1.0",
+                "capabilities": {},
+                "clientInfo": {"name": "test-client"}
+            },
+            "id": 1
+        }
+        
+        response = await handle_request(json.dumps(request))
+        assert response["jsonrpc"] == "2.0"
+        assert response["id"] == 1
+        assert "result" in response
+        assert response["result"]["protocolVersion"] == "1.0"
+        assert response["result"]["serverInfo"]["name"] == "kvm-control"
 
 @pytest.mark.asyncio
 async def test_list_vms_request():

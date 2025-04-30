@@ -69,20 +69,20 @@ async def test_create_vm_extremely_large_resources():
         assert any(x in result["message"].lower() for x in ["memory", "vcpu", "disk", "resources", "large"])
 
 @pytest.mark.asyncio
-async def test_vm_operations_null_domain():
+async def test_vm_operations_null_domain(mock_libvirt_conn):
     """Test VM operations when domain object is None"""
     with patch('libvirt.open') as mock_open:
-        mock_conn = MagicMock()
-        mock_conn.lookupByName.side_effect = libvirt.libvirtError('Domain not found')
-        mock_open.return_value = mock_conn
+        # Set up the mock connection
+        mock_libvirt_conn.lookupByName.side_effect = libvirt.libvirtError('Domain not found')
+        mock_open.return_value = mock_libvirt_conn
         
         for operation in [start_vm, stop_vm, reboot_vm]:
             result = await operation("operation", {"name": "test-vm"})
             assert result["status"] == "error"
-            assert "failed" in result["message"].lower() or "not found" in result["message"].lower()
+            assert "not found" in result["message"].lower()
 
 @pytest.mark.asyncio
-async def test_vm_operations_connection_timeout():
+async def test_vm_operations_connection_timeout(mock_libvirt_conn):
     """Test VM operations when connection times out"""
     with patch('libvirt.open') as mock_open:
         mock_open.side_effect = libvirt.libvirtError('Connection timed out')
@@ -93,13 +93,12 @@ async def test_vm_operations_connection_timeout():
             assert "timed out" in result["message"].lower()
 
 @pytest.mark.asyncio
-async def test_create_vm_with_invalid_master_image():
+async def test_create_vm_with_invalid_master_image(mock_libvirt_conn):
     """Test creating a VM with non-existent master image"""
     with patch('libvirt.open') as mock_open, \
          patch('subprocess.run') as mock_run:
-        mock_conn = MagicMock()
-        mock_open.return_value = mock_conn
-        mock_conn.lookupByName.side_effect = libvirt.libvirtError('Domain not found')
+        mock_open.return_value = mock_libvirt_conn
+        mock_libvirt_conn.lookupByName.side_effect = libvirt.libvirtError('Domain not found')
         mock_run.side_effect = subprocess.CalledProcessError(1, 'qemu-img', 
             'Failed to open master image')
         
@@ -336,9 +335,11 @@ async def test_create_vm_resource_limits():
     assert any(x in response["error"]["message"].lower() for x in ["memory exceeds", "vcpus exceed", "disk size exceeds"])
 
 @pytest.mark.asyncio
-async def test_libvirt_connection_failure():
+async def test_libvirt_connection_failure(mock_libvirt_conn):
     """Test handling of libvirt connection failure"""
-    with patch('libvirt.open', return_value=None):
+    with patch('libvirt.open') as mock_open:
+        mock_open.return_value = None
+        
         request = {
             "jsonrpc": "2.0",
             "method": "tools/call",
