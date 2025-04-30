@@ -1,0 +1,6 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+any time you need to interact with qemu or libvirt, use qemu-system instead of qemu-session. This includes on the command line.

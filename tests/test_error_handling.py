@@ -54,12 +54,11 @@ async def test_create_vm_libvirt_error():
         assert "Failed to define VM" in response["error"]["message"]
 
 @pytest.mark.asyncio
-async def test_start_vm_libvirt_error():
+async def test_start_vm_libvirt_error(mock_libvirt_conn):
     """Test handling of libvirt errors during VM start"""
     with patch('libvirt.open') as mock_open:
-        mock_conn = MagicMock()
-        mock_open.return_value = mock_conn
-        mock_conn.lookupByName.side_effect = libvirt.libvirtError("VM not found")
+        mock_libvirt_conn.lookupByName.side_effect = libvirt.libvirtError("VM not found")
+        mock_open.return_value = mock_libvirt_conn
         
         request = {
             "jsonrpc": "2.0",
@@ -80,12 +79,11 @@ async def test_start_vm_libvirt_error():
         assert "VM not found" in response["error"]["message"]
 
 @pytest.mark.asyncio
-async def test_stop_vm_libvirt_error():
+async def test_stop_vm_libvirt_error(mock_libvirt_conn):
     """Test handling of libvirt errors during VM stop"""
     with patch('libvirt.open') as mock_open:
-        mock_conn = MagicMock()
-        mock_open.return_value = mock_conn
-        mock_conn.lookupByName.side_effect = libvirt.libvirtError("VM not found")
+        mock_libvirt_conn.lookupByName.side_effect = libvirt.libvirtError("VM not found")
+        mock_open.return_value = mock_libvirt_conn
         
         request = {
             "jsonrpc": "2.0",
@@ -106,12 +104,11 @@ async def test_stop_vm_libvirt_error():
         assert "VM not found" in response["error"]["message"]
 
 @pytest.mark.asyncio
-async def test_reboot_vm_libvirt_error():
+async def test_reboot_vm_libvirt_error(mock_libvirt_conn):
     """Test handling of libvirt errors during VM reboot"""
     with patch('libvirt.open') as mock_open:
-        mock_conn = MagicMock()
-        mock_open.return_value = mock_conn
-        mock_conn.lookupByName.side_effect = libvirt.libvirtError("VM not found")
+        mock_libvirt_conn.lookupByName.side_effect = libvirt.libvirtError("VM not found")
+        mock_open.return_value = mock_libvirt_conn
         
         request = {
             "jsonrpc": "2.0",
@@ -207,9 +204,12 @@ async def test_handle_request_internal_error():
         assert "Internal error" in response["error"]["message"]
 
 @pytest.mark.asyncio
-async def test_handle_initialize_error():
+async def test_handle_initialize_error(mock_libvirt_conn):
     """Test handling of errors during initialization"""
-    with patch('kvm_mcp_server.handle_initialize', side_effect=Exception("Initialization failed")):
+    with patch('libvirt.open') as mock_open, \
+         patch('kvm_mcp_server.handle_initialize', side_effect=Exception("Initialization failed")):
+        mock_open.return_value = mock_libvirt_conn
+        
         request = {
             "jsonrpc": "2.0",
             "method": "initialize",
@@ -228,91 +228,88 @@ async def test_handle_initialize_error():
         assert "Initialization failed" in response["error"]["message"]
 
 @pytest.mark.asyncio
-@patch('libvirt.open')
-async def test_list_vms_domain_error(mock_libvirt_open, mock_conn, mock_domain):
+async def test_list_vms_domain_error(mock_libvirt_conn, mock_libvirt_domain):
     """Test VM listing with domain error"""
-    mock_libvirt_open.return_value = mock_conn
-    mock_conn.listAllDomains.return_value = [mock_domain]
-    mock_domain.state.return_value = (1, 0)  # Mock state and reason
-    mock_domain.name.side_effect = libvirt.libvirtError("Domain error")
-    
-    result = await list_vms("list_vms", {})
-    
-    assert len(result) == 1
-    assert "error" in result[0]
-    assert "Domain error" in result[0]["error"]
+    with patch('libvirt.open') as mock_open:
+        mock_libvirt_conn.listAllDomains.return_value = [mock_libvirt_domain]
+        mock_libvirt_domain.state.return_value = (1, 0)  # Mock state and reason
+        mock_libvirt_domain.name.side_effect = libvirt.libvirtError("Domain error")
+        mock_open.return_value = mock_libvirt_conn
+        
+        result = await list_vms("list_vms", {})
+        
+        assert len(result) == 1
+        assert "error" in result[0]
+        assert "Domain error" in result[0]["error"]
 
 @pytest.mark.asyncio
-@patch('libvirt.open')
-async def test_start_vm_domain_error(mock_libvirt_open, mock_conn):
-    """Test VM start with domain error"""
-    mock_libvirt_open.return_value = mock_conn
-    mock_conn.lookupByName.side_effect = libvirt.libvirtError("Domain not found")
-    
-    result = await start_vm("start_vm", {"name": "test-vm"})
-    
-    assert result["status"] == "error"
-    assert "Domain not found" in result["message"]
+async def test_start_vm_domain_error(mock_libvirt_conn):
+    """Test handling of domain errors during VM start"""
+    with patch('libvirt.open') as mock_open:
+        mock_libvirt_conn.lookupByName.side_effect = libvirt.libvirtError("Domain not found")
+        mock_open.return_value = mock_libvirt_conn
+        
+        result = await start_vm("start_vm", {"name": "test-vm"})
+        assert result["status"] == "error"
+        assert "not found" in result["message"].lower()
 
 @pytest.mark.asyncio
-@patch('libvirt.open')
-async def test_start_vm_create_error(mock_libvirt_open, mock_conn, mock_domain):
-    """Test VM start with create error"""
-    mock_libvirt_open.return_value = mock_conn
-    mock_domain.create.return_value = -1
-    
-    result = await start_vm("start_vm", {"name": "test-vm"})
-    
-    assert result["status"] == "error"
-    assert "Failed to start VM" in result["message"]
+async def test_start_vm_create_error(mock_libvirt_conn, mock_libvirt_domain):
+    """Test handling of create errors during VM start"""
+    with patch('libvirt.open') as mock_open:
+        mock_libvirt_conn.lookupByName.return_value = mock_libvirt_domain
+        mock_libvirt_domain.create.return_value = -1  # Simulate create failure
+        mock_open.return_value = mock_libvirt_conn
+        
+        result = await start_vm("start_vm", {"name": "test-vm"})
+        assert result["status"] == "error"
+        assert "failed to start" in result["message"].lower()
 
 @pytest.mark.asyncio
-@patch('libvirt.open')
-async def test_stop_vm_domain_error(mock_libvirt_open, mock_conn):
-    """Test VM stop with domain error"""
-    mock_libvirt_open.return_value = mock_conn
-    mock_conn.lookupByName.side_effect = libvirt.libvirtError("Domain not found")
-    
-    result = await stop_vm("stop_vm", {"name": "test-vm"})
-    
-    assert result["status"] == "error"
-    assert "Domain not found" in result["message"]
+async def test_stop_vm_domain_error(mock_libvirt_conn):
+    """Test handling of domain errors during VM stop"""
+    with patch('libvirt.open') as mock_open:
+        mock_libvirt_conn.lookupByName.side_effect = libvirt.libvirtError("Domain not found")
+        mock_open.return_value = mock_libvirt_conn
+        
+        result = await stop_vm("stop_vm", {"name": "test-vm"})
+        assert result["status"] == "error"
+        assert "not found" in result["message"].lower()
 
 @pytest.mark.asyncio
-@patch('libvirt.open')
-async def test_stop_vm_shutdown_error(mock_libvirt_open, mock_conn, mock_domain):
-    """Test VM stop with shutdown error"""
-    mock_libvirt_open.return_value = mock_conn
-    mock_domain.shutdown.return_value = -1
-    
-    result = await stop_vm("stop_vm", {"name": "test-vm"})
-    
-    assert result["status"] == "error"
-    assert "Failed to stop VM" in result["message"]
+async def test_stop_vm_shutdown_error(mock_libvirt_conn, mock_libvirt_domain):
+    """Test handling of shutdown errors during VM stop"""
+    with patch('libvirt.open') as mock_open:
+        mock_libvirt_conn.lookupByName.return_value = mock_libvirt_domain
+        mock_libvirt_domain.shutdown.return_value = -1  # Simulate shutdown failure
+        mock_open.return_value = mock_libvirt_conn
+        
+        result = await stop_vm("stop_vm", {"name": "test-vm"})
+        assert result["status"] == "error"
+        assert "failed to stop" in result["message"].lower()
 
 @pytest.mark.asyncio
-@patch('libvirt.open')
-async def test_reboot_vm_domain_error(mock_libvirt_open, mock_conn):
-    """Test VM reboot with domain error"""
-    mock_libvirt_open.return_value = mock_conn
-    mock_conn.lookupByName.side_effect = libvirt.libvirtError("Domain not found")
-    
-    result = await reboot_vm("reboot_vm", {"name": "test-vm"})
-    
-    assert result["status"] == "error"
-    assert "Domain not found" in result["message"]
+async def test_reboot_vm_domain_error(mock_libvirt_conn):
+    """Test handling of domain errors during VM reboot"""
+    with patch('libvirt.open') as mock_open:
+        mock_libvirt_conn.lookupByName.side_effect = libvirt.libvirtError("Domain not found")
+        mock_open.return_value = mock_libvirt_conn
+        
+        result = await reboot_vm("reboot_vm", {"name": "test-vm"})
+        assert result["status"] == "error"
+        assert "not found" in result["message"].lower()
 
 @pytest.mark.asyncio
-@patch('libvirt.open')
-async def test_reboot_vm_reboot_error(mock_libvirt_open, mock_conn, mock_domain):
-    """Test VM reboot with reboot error"""
-    mock_libvirt_open.return_value = mock_conn
-    mock_domain.reboot.return_value = -1
-    
-    result = await reboot_vm("reboot_vm", {"name": "test-vm"})
-    
-    assert result["status"] == "error"
-    assert "Failed to reboot VM" in result["message"]
+async def test_reboot_vm_reboot_error(mock_libvirt_conn, mock_libvirt_domain):
+    """Test handling of reboot errors during VM reboot"""
+    with patch('libvirt.open') as mock_open:
+        mock_libvirt_conn.lookupByName.return_value = mock_libvirt_domain
+        mock_libvirt_domain.reboot.return_value = -1  # Simulate reboot failure
+        mock_open.return_value = mock_libvirt_conn
+        
+        result = await reboot_vm("reboot_vm", {"name": "test-vm"})
+        assert result["status"] == "error"
+        assert "failed to reboot" in result["message"].lower()
 
 @pytest.mark.asyncio
 @patch('subprocess.run')

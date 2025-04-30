@@ -1,0 +1,86 @@
+2025-04-29 16:35:13,928 - kvm_mcp - INFO - Starting KVM MCP server
+2025-04-29 16:36:54,970 - kvm_mcp - INFO - Starting KVM MCP server
+2025-04-29 16:36:54,970 - kvm_mcp - INFO - Creating VM marge from template fedora-coreos
+2025-04-29 16:36:54,982 - kvm_mcp - ERROR - Failed to create disk image: qemu-img: /vm/marge.qcow2: Backing file specified without backing format
+Detected format of qcow2.
+
+2025-04-29 16:36:54,984 - kvm_mcp - INFO - Received EOF, shutting down
+2025-04-29 16:36:54,984 - kvm_mcp - INFO - Cleaning up resources
+2025-04-29 16:37:10,190 - kvm_mcp - INFO - Starting KVM MCP server
+2025-04-29 16:37:10,190 - kvm_mcp - INFO - Creating VM marge from template fedora-coreos
+2025-04-29 16:37:10,471 - kvm_mcp - ERROR - Libvirt connection error: Network not found: no network with matching name 'brforvms'
+2025-04-29 16:37:10,472 - kvm_mcp - ERROR - Error creating VM: Network not found: no network with matching name 'brforvms'
+2025-04-29 16:37:10,473 - kvm_mcp - INFO - Received EOF, shutting down
+2025-04-29 16:37:10,473 - kvm_mcp - INFO - Cleaning up resources
+2025-04-29 16:39:27,255 - kvm_mcp - INFO - Starting KVM MCP server
+2025-04-29 16:39:27,295 - kvm_mcp - INFO - Received EOF, shutting down
+2025-04-29 16:39:27,295 - kvm_mcp - INFO - Cleaning up resources
+2025-04-29 16:39:42,088 - kvm_mcp - INFO - Starting KVM MCP server
+2025-04-29 16:39:42,088 - kvm_mcp - INFO - Fetching VM list from libvirt
+2025-04-29 16:39:42,090 - kvm_mcp - WARNING - Error getting info for domain casa: Requested operation is not valid: domain is not running
+2025-04-29 16:39:42,092 - kvm_mcp - WARNING - Error getting info for domain synapse: Requested operation is not valid: domain is not running
+2025-04-29 16:39:42,093 - kvm_mcp - WARNING - Error getting info for domain kiwix: Requested operation is not valid: domain is not running
+2025-04-29 16:39:42,094 - kvm_mcp - WARNING - Error getting info for domain marge: Requested operation is not valid: domain is not running
+2025-04-29 16:39:42,095 - kvm_mcp - WARNING - Error getting info for domain test-vm: Requested operation is not valid: domain is not running
+2025-04-29 16:39:42,097 - kvm_mcp - INFO - Received EOF, shutting down
+2025-04-29 16:39:42,097 - kvm_mcp - INFO - Cleaning up resources
+2025-04-29 16:40:51,404 - kvm_mcp - INFO - Starting KVM MCP server
+2025-04-29 16:40:51,447 - kvm_mcp - INFO - Received EOF, shutting down
+2025-04-29 16:40:51,447 - kvm_mcp - INFO - Cleaning up resources
+2025-04-29 16:42:05,019 - kvm_mcp - INFO - Starting KVM MCP server
+2025-04-29 16:42:05,060 - kvm_mcp - INFO - Received EOF, shutting down
+2025-04-29 16:42:05,060 - kvm_mcp - INFO - Cleaning up resources
+2025-04-29 16:42:21,377 - kvm_mcp - INFO - Starting KVM MCP server
+2025-04-29 16:42:22,501 - kvm_mcp - INFO - Received EOF, shutting down
+2025-04-29 16:42:22,501 - kvm_mcp - INFO - Cleaning up resources
+2025-04-29 16:43:44,723 - kvm_mcp - INFO - Starting KVM MCP server
+2025-04-29 16:43:44,854 - kvm_mcp - INFO - Received EOF, shutting down
+2025-04-29 16:43:44,855 - kvm_mcp - INFO - Cleaning up resources
+2025-04-29 16:44:59,371 - kvm_mcp - INFO - Starting KVM MCP server
+2025-04-29 16:45:00,479 - kvm_mcp - INFO - Received EOF, shutting down
+2025-04-29 16:45:00,480 - kvm_mcp - INFO - Cleaning up resources
+2025-04-29 16:51:01,684 - kvm_mcp - INFO - Starting KVM MCP server
+2025-04-29 16:51:02,789 - kvm_mcp - INFO - Received EOF, shutting down
+2025-04-29 16:51:02,789 - kvm_mcp - INFO - Cleaning up resources
+2025-04-29 16:51:26,375 - kvm_mcp - INFO - Starting KVM MCP server
+2025-04-29 16:51:26,376 - kvm_mcp - INFO - Received EOF, shutting down
+2025-04-29 16:51:26,376 - kvm_mcp - INFO - Cleaning up resources
+2025-04-29 16:51:39,266 - kvm_mcp - INFO - Starting KVM MCP server
+2025-04-29 16:51:39,266 - kvm_mcp - INFO - Received EOF, shutting down
+2025-04-29 16:51:39,267 - kvm_mcp - INFO - Cleaning up resources
+2025-04-29 16:51:51,253 - kvm_mcp - INFO - Starting KVM MCP server
+2025-04-29 16:51:51,389 - kvm_mcp - INFO - Received EOF, shutting down
+2025-04-29 16:51:51,389 - kvm_mcp - INFO - Cleaning up resources
+2025-04-29 16:53:06,974 - kvm_mcp - INFO - Starting KVM MCP server
+2025-04-29 16:53:06,974 - kvm_mcp - INFO - Fetching VM list from libvirt
+2025-04-29 16:53:06,976 - kvm_mcp - WARNING - Error getting info for domain casa: Requested operation is not valid: domain is not running
+2025-04-29 16:53:06,978 - kvm_mcp - WARNING - Error getting info for domain synapse: Requested operation is not valid: domain is not running
+2025-04-29 16:53:06,979 - kvm_mcp - WARNING - Error getting info for domain kiwix: Requested operation is not valid: domain is not running
+2025-04-29 16:53:06,980 - kvm_mcp - WARNING - Error getting info for domain test-vm: Requested operation is not valid: domain is not running
+2025-04-29 16:53:06,988 - kvm_mcp - INFO - Received EOF, shutting down
+2025-04-29 16:53:06,988 - kvm_mcp - INFO - Cleaning up resources
+2025-04-29 16:55:50,765 - kvm_mcp - INFO - Starting KVM MCP server
+2025-04-29 16:55:50,765 - kvm_mcp - INFO - Fetching VM list from libvirt
+2025-04-29 16:55:50,767 - kvm_mcp - WARNING - Error getting info for domain casa: Requested operation is not valid: domain is not running
+2025-04-29 16:55:50,768 - kvm_mcp - WARNING - Error getting info for domain synapse: Requested operation is not valid: domain is not running
+2025-04-29 16:55:50,769 - kvm_mcp - WARNING - Error getting info for domain kiwix: Requested operation is not valid: domain is not running
+2025-04-29 16:55:50,770 - kvm_mcp - WARNING - Error getting info for domain test-vm: Requested operation is not valid: domain is not running
+2025-04-29 16:55:50,778 - kvm_mcp - INFO - Received EOF, shutting down
+2025-04-29 16:55:50,778 - kvm_mcp - INFO - Cleaning up resources
+2025-04-29 16:55:56,053 - kvm_mcp - INFO - Starting KVM MCP server
+2025-04-29 16:55:57,165 - kvm_mcp - INFO - Received EOF, shutting down
+2025-04-29 16:55:57,165 - kvm_mcp - INFO - Cleaning up resources
+2025-04-29 16:56:01,053 - kvm_mcp - INFO - Starting KVM MCP server
+2025-04-29 16:56:01,054 - kvm_mcp - INFO - Starting VM: terry
+2025-04-29 16:56:01,055 - kvm_mcp - WARNING - VM terry is already running
+2025-04-29 16:56:01,061 - kvm_mcp - INFO - Received EOF, shutting down
+2025-04-29 16:56:01,061 - kvm_mcp - INFO - Cleaning up resources
+2025-04-29 16:56:06,119 - kvm_mcp - INFO - Starting KVM MCP server
+2025-04-29 16:56:06,263 - kvm_mcp - INFO - Received EOF, shutting down
+2025-04-29 16:56:06,264 - kvm_mcp - INFO - Cleaning up resources
+2025-04-29 16:57:19,059 - kvm_mcp - INFO - Starting KVM MCP server
+2025-04-29 16:57:19,116 - kvm_mcp - INFO - Received EOF, shutting down
+2025-04-29 16:57:19,116 - kvm_mcp - INFO - Cleaning up resources
+2025-04-29 17:03:10,925 - kvm_mcp - INFO - Starting KVM MCP server
+2025-04-29 17:03:11,289 - kvm_mcp - INFO - Received EOF, shutting down
+2025-04-29 17:03:11,289 - kvm_mcp - INFO - Cleaning up resources

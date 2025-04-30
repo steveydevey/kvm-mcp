@@ -469,7 +469,7 @@ async def create_vm(name: str, arguments: dict) -> dict:
         memory = arguments.get("memory")
         vcpus = arguments.get("vcpus")
         disk_size = arguments.get("disk_size", 20)
-        network = arguments.get("network", "default")
+        network = arguments.get("network", "brforvms")
         master_image = arguments.get("master_image")
 
         # Validate parameters
@@ -515,7 +515,7 @@ async def create_vm(name: str, arguments: dict) -> dict:
                 return {"status": "error", "message": str(e)}
 
         # Create disk image
-        disk_path = f"/var/lib/libvirt/images/{vm_name}.qcow2"
+        disk_path = f"/vm/{vm_name}.qcow2"
         if os.path.exists(disk_path):
             return {"status": "error", "message": f"Disk image {disk_path} already exists"}
 
@@ -544,11 +544,11 @@ async def create_vm(name: str, arguments: dict) -> dict:
                     <source file='{disk_path}'/>
                     <target dev='vda' bus='virtio'/>
                 </disk>
-                <interface type='network'>
-                    <source network='{network}'/>
+                <interface type='bridge'>
+                    <source bridge='brforvms'/>
                     <model type='virtio'/>
                 </interface>
-                <graphics type='vnc' port='-1' autoport='yes'/>
+                <graphics type='vnc' port='-1' autoport='yes' listen='0.0.0.0'/>
             </devices>
         </domain>
         """
@@ -581,20 +581,24 @@ async def get_vnc_ports(name: str, arguments: dict) -> dict:
         import subprocess
         import json
         
-        # Get list of running VMs
-        result = subprocess.run(['virsh', 'list', '--name'], capture_output=True, text=True)
+        # Get list of running VMs using virsh with qemu:///system connection
+        result = subprocess.run(['virsh', '-c', 'qemu:///system', 'list', '--state-running', '--name'], 
+                              capture_output=True, text=True)
         if result.returncode != 0:
             return {"status": "error", "message": "Failed to get VM list", "error": result.stderr}
         
+        # Filter out empty lines and whitespace
         vms = [vm.strip() for vm in result.stdout.splitlines() if vm.strip()]
         vnc_ports = {}
         
         # Get VNC port for each VM
         for vm in vms:
-            port_result = subprocess.run(['virsh', 'vncdisplay', vm], capture_output=True, text=True)
+            # Use vncdisplay command with qemu:///system connection
+            port_result = subprocess.run(['virsh', '-c', 'qemu:///system', 'vncdisplay', vm], 
+                                      capture_output=True, text=True)
             if port_result.returncode == 0 and port_result.stdout.strip():
                 port = port_result.stdout.strip()
-                # Convert display number to actual port (e.g., ":1" -> 5901)
+                # Convert display number to actual port (e.g., ":2" -> 5902)
                 display_num = port.lstrip(':')
                 try:
                     num = int(display_num)
