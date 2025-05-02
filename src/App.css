@@ -1,5 +1,9 @@
 .App {
   text-align: center;
+  min-height: 100vh;
+  background-color: #282c34;
+  color: white;
+  padding: 20px;
 }
 
 .App-logo {
@@ -35,4 +39,71 @@
   to {
     transform: rotate(360deg);
   }
+}
+
+.game-container {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.score {
+  font-size: 1.5em;
+  margin: 20px 0;
+}
+
+.image-container {
+  margin: 20px 0;
+}
+
+.image-container img {
+  max-width: 100%;
+  max-height: 500px;
+  border-radius: 8px;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+form {
+  margin: 20px 0;
+}
+
+input[type="number"] {
+  padding: 10px;
+  font-size: 1.2em;
+  margin-right: 10px;
+  border-radius: 4px;
+  border: none;
+}
+
+button {
+  padding: 10px 20px;
+  font-size: 1.2em;
+  background-color: #61dafb;
+  color: #282c34;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.3s;
+}
+
+button:hover {
+  background-color: #4fa8c7;
+}
+
+.feedback {
+  margin: 20px 0;
+  padding: 20px;
+  background-color: rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+}
+
+.feedback a {
+  color: #61dafb;
+  text-decoration: none;
+  display: block;
+  margin: 10px 0;
+}
+
+.feedback a:hover {
+  text-decoration: underline;
 }
