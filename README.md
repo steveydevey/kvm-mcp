@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/steveydevey-kvm-mcp-badge.png)](https://mseep.ai/app/steveydevey-kvm-mcp)
+
 # KVM MCP Server
 
 A powerful JSON-RPC server for managing KVM virtual machines through a simple and intuitive interface. This server provides a centralized way to control and monitor your KVM virtual machines using a standardized protocol.
